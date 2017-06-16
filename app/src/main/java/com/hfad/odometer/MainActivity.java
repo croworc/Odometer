@@ -1,28 +1,43 @@
 package com.hfad.odometer;
 
 import android.app.Activity;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.support.annotation.NonNull;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.app.NotificationCompat;
+import android.support.v4.content.ContextCompat;
+import android.util.Log;
 import android.widget.TextView;
 
 import java.util.Locale;
 
 public class MainActivity extends Activity {
 
-    /** Holds a reference to the OdometerService */
+    /** Tag for logging purposes */
+    private static final String LOG_TAG = MainActivity.class.getSimpleName();
+
+    private final int PERMISSION_REQUEST_CODE = 698;
+    private final int NOTIFICATION_ID = 423;
+
+    /** Will hold a reference to the OdometerService */
     private OdometerService mOdometer;
-    /** Flag whether or not this activity is bound to the service */
+
+    /** Flag whether or not this activity is currently bound to the service */
     private boolean mIsBound = false;
 
-    /** We need to define a service connection */
+    /** We need to define a service connection in order to bind MainActivity to OdometerService */
     private ServiceConnection mConnection = new ServiceConnection() {
         /**
-         * Get a reference to the OdometerService when the service is connected
+         * Gets a reference to the OdometerService when the service is connected
          * @param serviceName the fully qualified name of the service
          * @param binder the IBinder implementation object provided by our service
          */
@@ -35,6 +50,8 @@ public class MainActivity extends Activity {
             // "is bound?" flag to true, as the activity is now bound to the service.
             mOdometer = odometerBinder.getOdometer();
             mIsBound  = true;
+            Log.d("onServiceConnected()", "Connected! Odometer != null? "
+                    + (mOdometer != null) + ", mIsBound = " + mIsBound );
         } // close method onServiceConnected()
 
         @Override
@@ -48,6 +65,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
         // Call the displayDistance() method when the activity is created.
         displayDistance();
     } // close method onCreate()
@@ -55,10 +73,70 @@ public class MainActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
-        // Bind the service when the activity starts.
-        Intent intent = new Intent(this, OdometerService.class);
-        bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
+
+        // If permission for ACCESS_FINE_LOCATION hasn't been already granted...
+        if (ContextCompat.checkSelfPermission(this, OdometerService.PERMISSION_STRING)
+                != PackageManager.PERMISSION_GRANTED) {
+            //...request it at runtime
+            ActivityCompat.requestPermissions(this,
+                    new String[] {OdometerService.PERMISSION_STRING}, PERMISSION_REQUEST_CODE);
+        } else {
+            // If permission has already been granted, bind to the service.
+            Intent intent = new Intent(this, OdometerService.class);
+            bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
+        } // close if: location permission granted/not yet granted
     } // close method onStart()
+
+    /**
+     * Returns the results of our permissions requests, if we've asked the user for permissions at
+     * runtime.
+     *
+     * @param requestCode the code that was used in our requestPermissions() method call
+     * @param permissions a string array of permissions
+     * @param grantResults an int array for the results of the requests
+     */
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        switch (requestCode) {
+            // Check whether the code matches the one in our requestPermissions() method call.
+            case PERMISSION_REQUEST_CODE:
+                // If permission was granted, bind to the service.
+                if (grantResults.length > 0
+                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Intent intent = new Intent(this, OdometerService.class);
+                    bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
+                } else {
+                    // If the request was cancelled, no results will be returned.
+                    // Code to run if permission was denied: notify the user that this permission
+                    // is necessary for the app to work properly.
+
+                    // Create a notification builder
+                    NotificationCompat.Builder builder = new NotificationCompat.Builder(this)
+                            .setSmallIcon(android.R.drawable.ic_menu_compass)
+                            .setContentTitle(getResources().getString(R.string.app_name))
+                            .setContentText(getResources().getString(R.string.permission_denied))
+                            .setPriority(NotificationCompat.PRIORITY_HIGH)
+                            .setVibrate(new long[] {1000, 1000})
+                            .setAutoCancel(true);
+
+                    // Create an action
+                    Intent actionIntent = new Intent(this, MainActivity.class);
+                    PendingIntent actionPendingIntent = PendingIntent.getActivity(
+                            this,
+                            0,
+                            actionIntent,
+                            PendingIntent.FLAG_UPDATE_CURRENT);
+                    builder.setContentIntent(actionPendingIntent);
+
+                    // Issue the notification
+                    NotificationManager notificationManager =
+                            (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                    notificationManager.notify(NOTIFICATION_ID, builder.build());
+                } // close if/else: permission granted/denied
+        } // close switch
+    } // close method onRequestPermissionsResult
 
     @Override
     protected void onStop() {
@@ -70,7 +148,7 @@ public class MainActivity extends Activity {
     } // close method onStop()
 
     /**
-     * Displays the distance returned by the service's getDistance() method.
+     * Displays the distance traveled, returned by the service's getDistance() method.
      *
      * Uses a Handler to run the code in a separate thread in the background.
      * Should be started by onCreate(), then runs in "standby" until we've got a
@@ -89,7 +167,7 @@ public class MainActivity extends Activity {
                     distance = mOdometer.getDistance();
                 }
                 String distanceString = String.format(Locale.getDefault(),
-                        "%1$,.2f miles", distance);
+                        "%1$,.3f km", distance);
                 distanceView.setText(distanceString);
                 handler.postDelayed(this, 1000); // repeat this code after ~1 second
             } // close method run()
